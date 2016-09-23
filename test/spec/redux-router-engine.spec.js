@@ -1,10 +1,12 @@
 "use strict";
 
 const Promise = require("bluebird");
+const React = require("react");
 
 const ReduxRouterEngine = require("../..");
 
 const expect = require("chai").expect;
+const sinon = require("sinon");
 
 require("babel-register");
 
@@ -22,6 +24,7 @@ const createReduxStore = () => Promise.resolve(createStore((state) => state, ["U
 describe("redux-router-engine", function () {
 
   let testReq;
+  let sandbox;
 
   beforeEach(() => {
     testReq = {
@@ -30,6 +33,12 @@ describe("redux-router-engine", function () {
       app: {},
       url: {}
     };
+
+    sandbox = sinon.sandbox.create();
+  });
+
+  afterEach(() => {
+    sandbox.restore();
   });
 
   it("should return 404 for unknown index route", () => {
@@ -78,6 +87,18 @@ describe("redux-router-engine", function () {
 
     return engine.render(testReq).then((result) => {
       expect(result.prefetch).to.contain(`window.__PRELOADED_STATE__ = ["Use Redux"];`);
+    });
+  });
+
+  it("should bootstrap a redux store with a custom stringify method", () => {
+    const stringifyPreloadedState = (storeState) => {
+      return `window.__REDUX_INITIAL_STATE__ = ${JSON.stringify(storeState)};`;
+    };
+    const engine = new ReduxRouterEngine({routes, createReduxStore, stringifyPreloadedState });
+    testReq.url.path = "/test";
+
+    return engine.render(testReq).then((result) => {
+      expect(result.prefetch).to.contain(`window.__REDUX_INITIAL_STATE__ = ["Use Redux"];`);
     });
   });
 
@@ -175,6 +196,86 @@ describe("redux-router-engine", function () {
 
     return engine.render(testReq, {withIds: false}).then((result) => {
       expect(result.html).to.not.contain("data-reactid");
+    });
+  });
+
+  it("should log rendering time when profileRenderingTime is true", () => {
+    const spy = sandbox.spy();
+    const engine = new ReduxRouterEngine({
+      routes, createReduxStore, profileRenderingTime: true
+    });
+    testReq.url.path = "/test";
+    testReq.log = spy;
+
+    return engine.render(testReq).then((result) => {
+      const spyArgs = spy.args[0];
+
+      expect(result).to.have.property("status", 200);
+      expect(spy).to.be.calledOnce;
+      expect(spyArgs[0]).to.deep.equal(["info", "logmon", "splunk", "perf"]);
+      expect(spyArgs[1]).to.have.property("url", testReq.url.path);
+      expect(spyArgs[1]).to.have.property("ssrtime").that.is.a("number");
+    });
+  });
+
+  it("should filter the store state when filterState method is passed", () => {
+    const reduxStore = () => Promise.resolve(createStore((state) => state, {
+      a: "a",
+      b: "b",
+      c: {
+        d: "d"
+      }
+    }));
+
+    const filterState = (state) => {
+      // we want to filter c from the state and return only a,b properties
+      const newState = Object.assign({}, state);
+      delete newState.c;
+      return newState;
+    };
+
+    const engine = new ReduxRouterEngine({
+      routes, createReduxStore: reduxStore, filterState
+    });
+    testReq.url.path = "/test";
+
+    return engine.render(testReq).then((result) => {
+      expect(result.prefetch).to.contain(`window.__PRELOADED_STATE__ = {"a":"a","b":"b"};`);
+    });
+  });
+
+  it("should apply a passed componentWrapper", () => {
+    class TestComponentWrapper extends React.Component {
+      render() {
+        return React.createElement(
+          "div",
+          {
+            id: this.props.testId
+          },
+          this.props.children
+        );
+      }
+    }
+
+    TestComponentWrapper.propTypes = {
+      testId: React.PropTypes.string
+    };
+
+    const componentWrapper = (createElement, req, renderProps, element) => { // eslint-disable-line
+      return createElement(
+        TestComponentWrapper,
+        {
+          testId: "test-wrap"
+        },
+        element
+      );
+    };
+
+    const engine = new ReduxRouterEngine({routes, createReduxStore, componentWrapper});
+    testReq.url.path = "/test";
+
+    return engine.render(testReq).then((result) => {
+      expect(result.html).to.contain(`id="test-wrap"`);
     });
   });
 
