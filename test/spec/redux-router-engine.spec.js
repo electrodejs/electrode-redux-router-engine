@@ -186,7 +186,7 @@ describe("redux-router-engine", function () {
       log: () => {
       },
       app: {},
-      url: {}
+      url: {path: "/test"}
     };
 
     const engine = new ReduxRouterEngine({routes, createReduxStore});
